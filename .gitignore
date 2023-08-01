@@ -1,2 +1,5 @@
 bin
 .dlv
+.gdbinit
+__pycache__
+.cache

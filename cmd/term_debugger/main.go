@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +12,15 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/jiangyinzuo/term-debugger/package/debugger"
-	"github.com/jiangyinzuo/term-debugger/package/texteditor"
+	log "github.com/sirupsen/logrus"
 )
 
+var debugTool = flag.String("debug", "gdb", "debug tool to use")
+var logLevel = flag.String("log", "info", "log level")
+
 type debugWrapper struct {
-	wg         sync.WaitGroup
-	debugger   debugger.TermDebugger
-	textEditor texteditor.TextEditor
+	wg       sync.WaitGroup
+	debugger debugger.TermDebugger
 }
 
 func startDebugWrapperAndWait(cmd *exec.Cmd) {
@@ -31,21 +34,20 @@ func startDebugWrapperAndWait(cmd *exec.Cmd) {
 		fmt.Println("Error: ", err)
 		os.Exit(1)
 	}
-	stderr, err := cmd.StderrPipe()
+	cmd.Stderr = cmd.Stdout
+	wrapper := &debugWrapper{
+		debugger: debugger.NewDebugger(debugTool),
+	}
+
+	wrapper.wg.Add(1)
+	go wrapper.processChildOutput(stdout)
+	go wrapper.processChildStdin(stdin)
+
+	err = cmd.Start()
 	if err != nil {
 		fmt.Println("Error: ", err)
 		os.Exit(1)
 	}
-	wrapper := &debugWrapper{
-		debugger:   &debugger.GDBAdapter{},
-		textEditor: &texteditor.EscapeSequence{},
-	}
-	wrapper.wg.Add(2)
-	go wrapper.processChildStderr(stderr)
-	go wrapper.processChildStdout(stdout)
-	go wrapper.processChildStdin(stdin)
-
-	cmd.Run()
 	wrapper.wg.Wait()
 	return
 }
@@ -57,15 +59,7 @@ func (d *debugWrapper) processChildStdin(stdin io.WriteCloser) {
 	}
 }
 
-func (d *debugWrapper) processChildStderr(stderr io.Reader) {
-	defer d.wg.Done()
-	scanner := bufio.NewScanner(stderr)
-	for scanner.Scan() {
-		d.debugger.ProcessChildStderr(scanner.Text(), d.textEditor)
-	}
-}
-
-func (d *debugWrapper) processChildStdout(stdout io.Reader) {
+func (d *debugWrapper) processChildOutput(stdout io.Reader) {
 	defer d.wg.Done()
 
 	buffer := make([]byte, 1)
@@ -79,25 +73,30 @@ func (d *debugWrapper) processChildStdout(stdout io.Reader) {
 		}
 		char := buffer[0]
 		output.WriteByte(char)
-
-		if output.Len() > len(suffix) && bytes.HasSuffix(output.Bytes(), []byte(suffix)) {
-			d.debugger.ProcessChildStdout(output.String(), d.textEditor)
+		if char == '\n' || (output.Len() >= len(suffix) && bytes.HasSuffix(output.Bytes(), []byte(suffix))) {
+			d.debugger.ProcessChildOutput(output.String())
 			output.Reset()
 		}
 	}
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: " + os.Args[0] + " <command>")
+	flag.Parse()
+	logLevel, err := log.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.SetLevel(logLevel)
+
+	blue := color.New(color.FgBlue)
+	args := flag.Args()
+	if len(args) == 0 {
+		blue.Println("command not found")
 		os.Exit(1)
 	}
-	blue := color.New(color.FgBlue)
-	blue.Println("Running command: ", os.Args[1:])
-	cmd := exec.Command(os.Args[1], os.Args[2:]...)
-	startDebugWrapperAndWait(cmd)
-	blue.Println("Bye " + os.Args[1] + "!")
-}
+	blue.Println("Running command: ", args)
+	cmd := exec.Command(args[0], args[1:]...)
 
-func handleUserInput(stdin io.WriteCloser, handler debugger.TermDebugger) {
+	startDebugWrapperAndWait(cmd)
+	blue.Println("Bye " + args[0] + "!")
 }
