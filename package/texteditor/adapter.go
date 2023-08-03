@@ -1,8 +1,6 @@
 package texteditor
 
 type TextEditor interface {
-	AddBreakPoint(id int, filename string, line int)
-	DeleteBreakPointByLoc(filename string, line int)
-	DeleteBreakPointByID(id int)
-	DeleteAllBreakPoints()
+	StepTo(filename string, line int)
+	SetBreakpoint(brkType BrkType, filename string, line int)
 }

@@ -1,4 +1,4 @@
-.PHONY: build clean fmt debug
+.PHONY: build clean fmt test debug
 
 OUTPUT_DIR := bin
 BINARY_NAME := term_debugger
@@ -16,6 +16,9 @@ debug:
 fmt:
 	@echo "Formatting code..."
 	@goimports -w ./
+
+test:
+	go test ./...
 
 clean:
 	@rm -rf $(OUTPUT_DIR)

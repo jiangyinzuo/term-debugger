@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/jiangyinzuo/term-debugger/package/texteditor"
 )
 
@@ -15,7 +17,6 @@ const (
 	StateInitial = iota
 	StateIdle
 	StateBreak
-	StateDeleteAll
 )
 
 var breakCommands = []string{"b", "br", "bre", "brea", "break"}
@@ -38,16 +39,17 @@ var deleteLocRegex = regexp.MustCompile(fmt.Sprintf("%s%s", deleteCmdRegex, locR
 var deleteIdRegex = regexp.MustCompile(fmt.Sprintf("%s%s", deleteCmdRegex, `(\d+)`))
 
 var stepToCursorLocRegex = regexp.MustCompile(fmt.Sprintf(`at %s\n$`, locRegex))
+var stepToLineRegex = regexp.MustCompile(`^(\d+)\s+`)
 
 type GDBAdapter struct {
-	editor texteditor.TextEditor
-	state  int
+	editorState *texteditor.EditorState
+	state       int
 }
 
-func NewGDBAdapter(editor texteditor.TextEditor) *GDBAdapter {
+func NewGDBAdapter(editorState *texteditor.EditorState) *GDBAdapter {
 	return &GDBAdapter{
-		editor: editor,
-		state:  StateInitial,
+		editorState: editorState,
+		state:       StateInitial,
 	}
 }
 
@@ -60,17 +62,18 @@ func (g *GDBAdapter) EndPromt() string {
 }
 
 func (g *GDBAdapter) ProcessChildOutput(output string) {
-	switch g.state {
-	case StateInitial:
-		g.maybeAddBreakpoint(output)
-	case StateBreak:
-		g.maybeAddBreakpoint(output)
-		g.state = StateIdle
+	switch output {
+	case g.EndPromt():
+		g.processPromptEnd()
+	case "Delete all breakpoints? (y or n) [answered Y; input not from terminal]\n":
+		log.Debugln("delete all breakpoints")
+		g.editorState.RemoveAllBreakPoints()
+	default:
+		if g.maybeAddBreakpoint(output) ||
+			g.maybeStepToLoc(output) {
+		}
 	}
 
-	if output == " Delete all breakpoints? (y or n) " {
-		g.state = StateDeleteAll
-	}
 	fmt.Print(output)
 	os.Stdout.Sync()
 }
@@ -86,18 +89,39 @@ func (g *GDBAdapter) ProcessUserInput(stdin io.WriteCloser, input string) {
 		if g.maybeInputDeleteBreakpoint(input) {
 			break
 		}
-	case StateDeleteAll:
-		if input == "y" {
-			g.editor.DeleteAllBreakPoints()
-		} else {
-			g.state = StateIdle
-		}
 	}
 	stdin.Write([]byte(input + "\n"))
 }
 
-func (g *GDBAdapter) maybeAddBreakpoint(output string) {
+func (g *GDBAdapter) processPromptEnd() {
+	g.editorState.StepToCursor()
+}
+
+func (g *GDBAdapter) maybeStepToLoc(output string) bool {
+	if matches := stepToCursorLocRegex.FindStringSubmatch(output); matches != nil {
+		filename := matches[1]
+		line, err := strconv.Atoi(matches[2])
+		if err != nil {
+			panic(err)
+		}
+		g.editorState.SetCurrentFileName(filename)
+		g.editorState.SetCurrentLine(line)
+		return true
+	}
+	if matches := stepToLineRegex.FindStringSubmatch(output); matches != nil {
+		line, err := strconv.Atoi(matches[1])
+		if err != nil {
+			panic(err)
+		}
+		g.editorState.SetCurrentLine(line)
+		return true
+	}
+	return false
+}
+
+func (g *GDBAdapter) maybeAddBreakpoint(output string) bool {
 	if matches := breakRegex.FindStringSubmatch(output); matches != nil {
+		log.Debugf("matches: %v\n", matches)
 		id, err := strconv.Atoi(matches[1])
 		if err != nil {
 			panic(err)
@@ -106,8 +130,10 @@ func (g *GDBAdapter) maybeAddBreakpoint(output string) {
 		if err != nil {
 			panic(err)
 		}
-		g.editor.AddBreakPoint(id, matches[2], line)
+		g.editorState.AddBreakpoint(id, matches[2], line)
+		return true
 	}
+	return false
 }
 
 func (g *GDBAdapter) maybeInputAddBreakPoint(input string) bool {
@@ -120,19 +146,18 @@ func (g *GDBAdapter) maybeInputAddBreakPoint(input string) bool {
 	return false
 }
 
-func (g *GDBAdapter) parseBreakPointByLoc(matches []string) {
+func (g *GDBAdapter) deleteBreakPointByLoc(matches []string) {
 	filename := matches[2]
 	line, err := strconv.Atoi(matches[3])
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(filename, line)
+	g.editorState.RemoveBreakpointByLoc(filename, line)
 }
 
 func (g *GDBAdapter) maybeInputDeleteBreakpoint(input string) bool {
-	fmt.Println("Maybe!")
 	if matches := clearLocRegex.FindStringSubmatch(input); matches != nil {
-		g.parseBreakPointByLoc(matches)
+		g.deleteBreakPointByLoc(matches)
 		return true
 	}
 	if matches := clearLineRegex.FindStringSubmatch(input); matches != nil {
@@ -140,11 +165,11 @@ func (g *GDBAdapter) maybeInputDeleteBreakpoint(input string) bool {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println("TODO", line)
+		g.editorState.RemoveBreakpointByLine(line)
 		return true
 	}
 	if matches := deleteLocRegex.FindStringSubmatch(input); matches != nil {
-		g.parseBreakPointByLoc(matches)
+		g.deleteBreakPointByLoc(matches)
 		return true
 	}
 	if matches := deleteIdRegex.FindStringSubmatch(input); matches != nil {
@@ -152,9 +177,8 @@ func (g *GDBAdapter) maybeInputDeleteBreakpoint(input string) bool {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(id)
+		g.editorState.RemoveBreakpointById(id)
 		return true
 	}
-	fmt.Println("Oops!")
 	return false
 }
