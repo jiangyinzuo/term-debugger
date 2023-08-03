@@ -33,4 +33,3 @@ func (es *EditorState) SyncCursor() {
 func (es *EditorState) SignBreakpoint(brkType byte, filename string, line int) {
 	es.textEditor.SignBreakpoint(brkType, filename, line)
 }
-

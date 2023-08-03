@@ -89,4 +89,3 @@ func (g *GDBAdapter) maybeStepToLoc(output string) bool {
 	}
 	return false
 }
-
