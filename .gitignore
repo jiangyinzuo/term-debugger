@@ -3,3 +3,7 @@ bin
 .gdbinit
 __pycache__
 .cache
+GTAGS
+GPATH
+GRTAGS
+tags
