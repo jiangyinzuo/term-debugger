@@ -12,9 +12,13 @@ import (
 )
 
 type TermDebugger interface {
+	// Name returns debugger's name
 	Name() string
+	// EndPromt returns debugger's end prompt (gdb, pdb, lldb, dlv)
 	EndPromt() string
+	// ProcessChildOutput parses chlid process(gdb, pdb, lldb, dlv)'s output.
 	ProcessChildOutput(string)
+	// ProcessUserInput sends user input to chlid process(gdb, pdb, lldb, dlv).
 	ProcessUserInput(io.WriteCloser, string)
 }
 
